@@ -1,0 +1,10 @@
+streamlit
+supabase
+psycopg2-binary
+sentence-transformers
+python-dotenv
+pandas
+plotly
+numpy
+feedparser
+requests
