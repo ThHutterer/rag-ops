@@ -11,10 +11,10 @@ sys.path.insert(0, ".")
 from ragops.authority import compute_authority_score
 
 RSS_FEEDS = [
-    "https://feeds.feedburner.com/oreilly/radar",
     "https://rss.arxiv.org/rss/cs.AI",
     "https://www.technologyreview.com/feed/",
     "https://feeds.arstechnica.com/arstechnica/technology-lab",
+    "https://rss.orf.at/news.xml",
 ]
 
 MAX_PER_FEED = 50
