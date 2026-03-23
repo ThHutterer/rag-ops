@@ -1,24 +1,32 @@
+import os
 from typing import List
-from sentence_transformers import SentenceTransformer
-from ragops.config import EMBEDDING_MODEL
+from openai import OpenAI
+from dotenv import load_dotenv
 
-_model = None
+load_dotenv()
+
+_client = None
 
 
-def _get_model() -> SentenceTransformer:
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL)
-    return _model
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _client
 
 
 def embed(text: str) -> List[float]:
-    """Returns 384-dim embedding as list of floats for all-MiniLM-L6-v2."""
-    model = _get_model()
-    return model.encode(text).tolist()
+    """Returns 1536-dim embedding using text-embedding-3-small (matches n8n)."""
+    response = _get_client().embeddings.create(
+        model="text-embedding-3-small",
+        input=text,
+    )
+    return response.data[0].embedding
 
 
 def embed_batch(texts: List[str]) -> List[List[float]]:
-    """Batch embed for efficiency during ingestion. Returns list of 384-dim embeddings."""
-    model = _get_model()
-    return model.encode(texts).tolist()
+    response = _get_client().embeddings.create(
+        model="text-embedding-3-small",
+        input=texts,
+    )
+    return [d.embedding for d in sorted(response.data, key=lambda x: x.index)]
