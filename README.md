@@ -39,8 +39,6 @@ Streamlit Dashboard (this repo)
 - **Knowledge Health** — Per-document health table with color-coded scores
 - **Conflict Detection** — Side-by-side review of conflicting chunk pairs with approve/reject
 - **Quarantine Queue** — Pending conflicts sorted by similarity, with authority score comparison
-- **Decay Simulation** — Simulate corpus health N months into the future
-- **Search Playground** — Interactive retrieval with α/β/γ weight sliders
 
 ---
 
