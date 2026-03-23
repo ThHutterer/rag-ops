@@ -1,14 +1,22 @@
 SOURCE_TYPE_SCORES = {
     "metaculus": 1.0,
+    "ki_text": 1.0,
+    "alt_ki_text": 0.8,
+    "bad_ki_text": 0.3,
     "arxiv_paper": 0.75,
     "news_article": 0.5,
 }
 
 REVIEW_STATUS_MULTIPLIER = {
     "resolved": 1.0,
+    "verified": 1.0,
     "published": 0.85,
     "preprint": 0.7,
+    "draft": 1.0,  # bad_ki_text uses draft; score comes entirely from source type
 }
+
+# Source types whose decay_score is locked at 1.0 permanently
+NO_DECAY_SOURCE_TYPES = {"metaculus", "ki_text"}
 
 
 def compute_authority_score(source_type: str, review_status: str) -> float:

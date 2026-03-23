@@ -7,6 +7,7 @@ from ragops.config import get_supabase, CONFLICT_SIMILARITY_THRESHOLD
 from ragops.embedder import embed, embed_batch
 from ragops.chunker import chunk_text
 from ragops.decay import compute_decay
+from ragops.authority import NO_DECAY_SOURCE_TYPES
 
 
 def _days_since(dt_str) -> int:
@@ -43,8 +44,9 @@ def ingest_document(document_id: str) -> dict:
 
     source_type = doc["source_type"]
     is_metaculus = source_type == "metaculus"
+    no_decay = source_type in NO_DECAY_SOURCE_TYPES
     days_old = _days_since(doc.get("last_modified"))
-    decay_score = 1.0 if is_metaculus else compute_decay(days_old)
+    decay_score = 1.0 if no_decay else compute_decay(days_old)
 
     # Chunk the content
     content = doc.get("content", "") or ""

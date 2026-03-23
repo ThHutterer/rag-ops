@@ -12,56 +12,64 @@ st.set_page_config(
 
 st.title("🧠 RAG Operations Dashboard")
 st.markdown(
-    "**Demonstrating production RAG operations:** staleness detection, conflict resolution, "
-    "authority scoring, and knowledge decay — powered by real public data sources."
+    "**Production RAG operations:** authority scoring, knowledge decay, and weighted retrieval — "
+    "powered by your local knowledge base."
 )
 st.markdown("---")
 
-# Live KPIs
 try:
-    from ragops.config import get_supabase
-    sb = get_supabase()
+    from ragops.config import get_conn
+    from ragops.decay import compute_decay
+    from datetime import datetime, timezone
 
-    docs = sb.table("documents").select("id, source_type").execute().data or []
-    chunks = sb.table("chunks").select("id, decay_score, flagged").execute().data or []
-    queue = sb.table("quarantine_queue").select("id, status").eq("status", "pending").execute().data or []
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM documents_pg")
+        total_chunks = cur.fetchone()[0]
 
-    total_docs = len(docs)
-    total_chunks = len(chunks)
-    flagged_chunks = sum(1 for c in chunks if c.get("flagged"))
-    pending_conflicts = len(queue)
+        cur.execute("SELECT COUNT(*) FROM document_metadata")
+        total_docs = cur.fetchone()[0]
 
-    decay_scores = [c["decay_score"] for c in chunks if c.get("decay_score") is not None]
-    avg_decay = sum(decay_scores) / len(decay_scores) if decay_scores else 0.0
+        cur.execute("SELECT authority_score, created_at FROM document_metadata WHERE authority_score IS NOT NULL")
+        rows = cur.fetchall()
+    conn.close()
 
-    kpi_ok = True
-except Exception:
-    kpi_ok = False
+    def normalize(raw):
+        try:
+            v = float(raw)
+            return v / 10.0 if v > 1.0 else v
+        except Exception:
+            return 0.5
 
-if kpi_ok:
-    c1, c2, c3, c4, c5 = st.columns(5)
+    now = datetime.now(timezone.utc)
+    health_scores = []
+    for raw_auth, created_at in rows:
+        auth = normalize(raw_auth)
+        days = 0
+        if created_at:
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            days = max(0, (now - created_at).days)
+        health_scores.append(auth * compute_decay(days))
+
+    avg_health = sum(health_scores) / len(health_scores) if health_scores else 0.0
+    avg_auth = sum(normalize(r[0]) for r in rows) / len(rows) if rows else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Documents", total_docs)
     c2.metric("Chunks", total_chunks)
-    c3.metric("Avg Decay Score", f"{avg_decay:.2f}")
-    c4.metric("Flagged Chunks", flagged_chunks)
-    c5.metric("Pending Conflicts", pending_conflicts)
-else:
-    st.warning("Could not load live metrics. Check your .env configuration.")
+    c3.metric("Avg Health Score", f"{avg_health:.3f}")
+    c4.metric("Avg Authority", f"{avg_auth:.2f}")
+
+except Exception as e:
+    st.warning(f"Could not load live metrics: {e}")
 
 st.markdown("---")
 
-# Page cards
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3 = st.columns(3)
 with col1:
-    st.info("**📊 Knowledge Health**\nCorpus overview — chunk counts, health scores, flagged content.")
+    st.info("**📊 Knowledge Health**\nCorpus overview — document stats, authority & health scores.")
 with col2:
-    st.info("**⚔️ Conflict Detection**\nReview and resolve semantic conflicts and falsified claims.")
-with col3:
-    st.info("**🔒 Quarantine Queue**\nFull history of conflict resolution with approve/reject workflow.")
-with col4:
     st.info("**📉 Decay Simulation**\nSimulate how corpus health degrades over time.")
-with col5:
+with col3:
     st.info("**🔍 Search Playground**\nInteractive retrieval with tunable α/β/γ weights.")
-
-st.markdown("---")
-st.caption("Data sources: Metaculus resolved questions · arXiv cs.AI · MIT Technology Review · Ars Technica · ORF News")

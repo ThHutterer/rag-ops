@@ -1,10 +1,7 @@
 streamlit
-supabase
 psycopg2-binary
-sentence-transformers
+openai
 python-dotenv
 pandas
 plotly
 numpy
-feedparser
-requests

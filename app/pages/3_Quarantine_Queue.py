@@ -1,94 +1,93 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime, timedelta
 import sys
 
 sys.path.insert(0, ".")
-from ragops.config import get_supabase
+from ragops.config import get_conn
 
 st.set_page_config(page_title="Quarantine Queue", layout="wide")
 st.title("🔒 Quarantine Queue")
-st.markdown("Full history of conflict resolution.")
+
+QUERY_PENDING = """
+    SELECT
+        q.id,
+        q.chunk_id,
+        q.conflict_chunk_id,
+        q.similarity,
+        q.created_at,
+        a.text        AS chunk_text,
+        b.text        AS conflict_text,
+        am.title      AS chunk_title,
+        bm.title      AS conflict_title,
+        am.authority_score AS chunk_authority,
+        bm.authority_score AS conflict_authority
+    FROM quarantine_queue q
+    JOIN documents_pg a  ON a.id = q.chunk_id
+    JOIN documents_pg b  ON b.id = q.conflict_chunk_id
+    LEFT JOIN document_metadata am ON am.id = a.metadata->>'file_id'
+    LEFT JOIN document_metadata bm ON bm.id = b.metadata->>'file_id'
+    WHERE q.status = 'pending'
+    ORDER BY q.similarity DESC, q.created_at DESC
+"""
+
+QUERY_UPDATE = """
+    UPDATE quarantine_queue
+    SET status = %s, reviewed_at = now()
+    WHERE id = %s
+"""
 
 try:
-    sb = get_supabase()
+    conn = get_conn()
 
-    # --- Filters ---
-    col_f1, col_f2, col_f3 = st.columns(3)
-    with col_f1:
-        status_filter = st.selectbox("Status", ["all", "pending", "approved", "rejected"])
-    with col_f2:
-        days_back = st.slider("Days back", 1, 90, 30)
-    with col_f3:
-        reason_filter = st.selectbox("Reason", ["all", "semantic_overlap", "falsified_by_resolution"])
+    with conn.cursor() as cur:
+        cur.execute(QUERY_PENDING)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
 
-    cutoff = (datetime.utcnow() - timedelta(days=days_back)).isoformat() + "Z"
-
-    query = sb.table("quarantine_queue").select("*").gte("created_at", cutoff)
-    if status_filter != "all":
-        query = query.eq("status", status_filter)
-    if reason_filter != "all":
-        query = query.eq("reason", reason_filter)
-
-    result = query.order("created_at", desc=True).execute()
-    entries = result.data or []
-
-    if not entries:
-        st.info("No quarantine entries found for the selected filters.")
+    if not rows:
+        st.success("Keine offenen Konflikte.")
         st.stop()
 
-    # Build display table
-    rows = []
-    for e in entries:
-        chunk_result = sb.table("chunks").select("content").eq("id", e["chunk_id"]).execute()
-        preview = chunk_result.data[0]["content"][:100] + "..." if chunk_result.data else "(not found)"
-        rows.append({
-            "Preview": preview,
-            "Reason": e.get("reason", ""),
-            "Similarity": round(e.get("similarity", 0.0), 4),
-            "Status": e.get("status", ""),
-            "Created": e.get("created_at", "")[:10],
-            "Reviewed": (e.get("reviewed_at") or "")[:10],
-        })
+    st.write(f"**{len(rows)} offene Konflikte**")
 
-    df = pd.DataFrame(rows)
+    for row in rows:
+        similarity_pct = round(row["similarity"] * 100, 1)
+        chunk_auth = float(row["chunk_authority"] or 0)
+        conflict_auth = float(row["conflict_authority"] or 0)
 
-    def color_status(val):
-        if val == "approved":
-            return "background-color: #d4edda"
-        elif val == "rejected":
-            return "background-color: #f8d7da"
-        elif val == "pending":
-            return "background-color: #fff3cd"
-        return ""
+        with st.expander(
+            f"Similarity {similarity_pct}% — {row['chunk_title'] or 'Unbekannt'}  ↔  {row['conflict_title'] or 'Unbekannt'}",
+            expanded=False
+        ):
+            col1, col2 = st.columns(2)
 
-    st.dataframe(df.style.applymap(color_status, subset=["Status"]), use_container_width=True)
+            with col1:
+                st.markdown(f"**{row['chunk_title'] or 'Unbekannt'}**")
+                st.caption(f"Authority Score: `{chunk_auth:.3f}`")
+                st.text_area("Text", row["chunk_text"] or "", height=200, key=f"a_{row['id']}", disabled=True)
 
-    st.markdown("---")
-    st.subheader("Resolution Rate Over Time")
+            with col2:
+                st.markdown(f"**{row['conflict_title'] or 'Unbekannt'}**")
+                st.caption(f"Authority Score: `{conflict_auth:.3f}`")
+                st.text_area("Text", row["conflict_text"] or "", height=200, key=f"b_{row['id']}", disabled=True)
 
-    # Chart: approvals + rejections per day
-    resolved_entries = [e for e in entries if e.get("reviewed_at")]
-    if resolved_entries:
-        chart_data = {}
-        for e in resolved_entries:
-            day = e["reviewed_at"][:10]
-            if day not in chart_data:
-                chart_data[day] = {"approved": 0, "rejected": 0}
-            status = e.get("status", "")
-            if status in chart_data[day]:
-                chart_data[day][status] += 1
+            higher = "Links" if chunk_auth >= conflict_auth else "Rechts"
+            st.caption(f"Höherer Authority Score: **{higher}**")
 
-        chart_rows = [{"date": d, **v} for d, v in sorted(chart_data.items())]
-        chart_df = pd.DataFrame(chart_rows)
-        fig = px.line(chart_df, x="date", y=["approved", "rejected"],
-                      title="Resolutions per Day",
-                      labels={"value": "Count", "variable": "Status"})
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No resolved entries yet to chart.")
+            btn_col1, btn_col2, _ = st.columns([1, 1, 6])
+            with btn_col1:
+                if st.button("✅ Approve", key=f"approve_{row['id']}"):
+                    with conn.cursor() as cur:
+                        cur.execute(QUERY_UPDATE, ("approved", row["id"]))
+                    conn.commit()
+                    st.rerun()
+            with btn_col2:
+                if st.button("❌ Reject", key=f"reject_{row['id']}"):
+                    with conn.cursor() as cur:
+                        cur.execute(QUERY_UPDATE, ("rejected", row["id"]))
+                    conn.commit()
+                    st.rerun()
+
+    conn.close()
 
 except Exception as e:
-    st.error(f"Database connection error: {e}")
-    st.info("Make sure your `.env` file is configured with valid Supabase credentials.")
+    st.error(f"Datenbankfehler: {e}")
